@@ -4,7 +4,7 @@
 #include "cpuminer-config.h"
 
 #include <stdbool.h>
-#include <stdint.h>
+#include <inttypes.h>
 #include <sys/time.h>
 #include <pthread.h>
 #include <jansson.h>
@@ -20,15 +20,15 @@
 #endif
 #ifdef HAVE_ALLOCA_H
 # include <alloca.h>
-#elif defined __GNUC__
-# define alloca __builtin_alloca
-#elif defined _AIX
-# define alloca __alloca
-#elif defined _MSC_VER
-# include <malloc.h>
-# define alloca _alloca
-#else
-# ifndef HAVE_ALLOCA
+#elif !defined alloca
+# ifdef __GNUC__
+#  define alloca __builtin_alloca
+# elif defined _AIX
+#  define alloca __alloca
+# elif defined _MSC_VER
+#  include <malloc.h>
+#  define alloca _alloca
+# elif !defined HAVE_ALLOCA
 #  ifdef  __cplusplus
 extern "C"
 #  endif
@@ -36,52 +36,13 @@ void *alloca (size_t);
 # endif
 #endif
 
-
-#ifdef __SSE2__
-#define WANT_SSE2_4WAY 1
-#endif
-
-#if defined(__i386__) || defined(__x86_64__)
-#define WANT_VIA_PADLOCK 1
-#endif
-
-#if defined(__x86_64__) && defined(__SSE2__) && defined(HAS_YASM)
-#define WANT_X8664_SSE2 1
-#endif
-
-#if ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
-#define WANT_BUILTIN_BSWAP
-#else
-#if HAVE_BYTESWAP_H
-#include <byteswap.h>
-#elif defined(USE_SYS_ENDIAN_H)
-#include <sys/endian.h>
-#elif defined(__APPLE__)
-#include <libkern/OSByteOrder.h>
-#define bswap_16 OSSwapInt16
-#define bswap_32 OSSwapInt32
-#define bswap_64 OSSwapInt64
-#else
-#define	bswap_16(value)  \
- 	((((value) & 0xff) << 8) | ((value) >> 8))
-
-#define	bswap_32(value)	\
- 	(((uint32_t)bswap_16((uint16_t)((value) & 0xffff)) << 16) | \
- 	(uint32_t)bswap_16((uint16_t)((value) >> 16)))
- 
-#define	bswap_64(value)	\
- 	(((uint64_t)bswap_32((uint32_t)((value) & 0xffffffff)) \
- 	    << 32) | \
- 	(uint64_t)bswap_32((uint32_t)((value) >> 32)))
-#endif
-#endif /* !defined(__GLXBYTEORDER_H__) */
-
 #ifdef HAVE_SYSLOG_H
 #include <syslog.h>
 #else
 enum {
 	LOG_ERR,
 	LOG_WARNING,
+	LOG_NOTICE,
 	LOG_INFO,
 	LOG_DEBUG,
 };
@@ -97,19 +58,16 @@ enum {
 #define likely(expr) (expr)
 #endif
 
-#if defined(__i386__)
-#define WANT_CRYPTOPP_ASM32
-#endif
-
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 #endif
 
-struct thr_info {
-	int		id;
-	pthread_t	pth;
-	struct thread_q	*q;
-};
+#if ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
+#define WANT_BUILTIN_BSWAP
+#else
+#define bswap_32(x) ((((x) << 24) & 0xff000000u) | (((x) << 8) & 0x00ff0000u) \
+                   | (((x) >> 8) & 0x0000ff00u) | (((x) >> 24) & 0x000000ffu))
+#endif
 
 static inline uint32_t swab32(uint32_t v)
 {
@@ -120,80 +78,169 @@ static inline uint32_t swab32(uint32_t v)
 #endif
 }
 
-static inline void swap256(void *dest_p, const void *src_p)
+#ifdef HAVE_SYS_ENDIAN_H
+#include <sys/endian.h>
+#endif
+
+#if !HAVE_DECL_BE32DEC
+static inline uint32_t be32dec(const void *pp)
 {
-	uint32_t *dest = dest_p;
-	const uint32_t *src = src_p;
-
-	dest[0] = src[7];
-	dest[1] = src[6];
-	dest[2] = src[5];
-	dest[3] = src[4];
-	dest[4] = src[3];
-	dest[5] = src[2];
-	dest[6] = src[1];
-	dest[7] = src[0];
+	const uint8_t *p = (uint8_t const *)pp;
+	return ((uint32_t)(p[3]) + ((uint32_t)(p[2]) << 8) +
+	    ((uint32_t)(p[1]) << 16) + ((uint32_t)(p[0]) << 24));
 }
+#endif
 
-extern bool opt_debug;
-extern bool opt_protocol;
-extern const uint32_t sha256_init_state[];
-extern json_t *json_rpc_call(CURL *curl, const char *url, const char *userpass,
-			     const char *rpc_req, bool, bool);
-extern char *bin2hex(const unsigned char *p, size_t len);
-extern bool hex2bin(unsigned char *p, const char *hexstr, size_t len);
+#if !HAVE_DECL_LE32DEC
+static inline uint32_t le32dec(const void *pp)
+{
+	const uint8_t *p = (uint8_t const *)pp;
+	return ((uint32_t)(p[0]) + ((uint32_t)(p[1]) << 8) +
+	    ((uint32_t)(p[2]) << 16) + ((uint32_t)(p[3]) << 24));
+}
+#endif
 
-extern unsigned int ScanHash_4WaySSE2(int, const unsigned char *pmidstate,
-	unsigned char *pdata, unsigned char *phash1, unsigned char *phash,
-	const unsigned char *ptarget,
-	uint32_t max_nonce, unsigned long *nHashesDone);
+#if !HAVE_DECL_BE32ENC
+static inline void be32enc(void *pp, uint32_t x)
+{
+	uint8_t *p = (uint8_t *)pp;
+	p[3] = x & 0xff;
+	p[2] = (x >> 8) & 0xff;
+	p[1] = (x >> 16) & 0xff;
+	p[0] = (x >> 24) & 0xff;
+}
+#endif
 
-extern unsigned int scanhash_sse2_amd64(int, const unsigned char *pmidstate,
-	unsigned char *pdata, unsigned char *phash1, unsigned char *phash,
-	const unsigned char *ptarget,
-	uint32_t max_nonce, unsigned long *nHashesDone);
+#if !HAVE_DECL_LE32ENC
+static inline void le32enc(void *pp, uint32_t x)
+{
+	uint8_t *p = (uint8_t *)pp;
+	p[0] = x & 0xff;
+	p[1] = (x >> 8) & 0xff;
+	p[2] = (x >> 16) & 0xff;
+	p[3] = (x >> 24) & 0xff;
+}
+#endif
 
-extern bool scanhash_via(int, unsigned char *data_inout,
-	const unsigned char *target,
+#if JANSSON_MAJOR_VERSION >= 2
+#define JSON_LOADS(str, err_ptr) json_loads((str), 0, (err_ptr))
+#else
+#define JSON_LOADS(str, err_ptr) json_loads((str), (err_ptr))
+#endif
+
+#define USER_AGENT PACKAGE_NAME "/" PACKAGE_VERSION
+
+void sha256_init(uint32_t *state);
+void sha256_transform(uint32_t *state, const uint32_t *block, int swap);
+void sha256d(unsigned char *hash, const unsigned char *data, int len);
+
+#if defined(__ARM_NEON__) || defined(__i386__) || defined(__x86_64__)
+#define HAVE_SHA256_4WAY 1
+int sha256_use_4way();
+void sha256_init_4way(uint32_t *state);
+void sha256_transform_4way(uint32_t *state, const uint32_t *block, int swap);
+#endif
+
+#if defined(__x86_64__) && defined(USE_AVX2)
+#define HAVE_SHA256_8WAY 1
+int sha256_use_8way();
+void sha256_init_8way(uint32_t *state);
+void sha256_transform_8way(uint32_t *state, const uint32_t *block, int swap);
+#endif
+
+extern int scanhash_sha256d(int thr_id, uint32_t *pdata,
+	const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done);
+
+extern unsigned char *scrypt_buffer_alloc();
+extern int scanhash_scrypt(int thr_id, uint32_t *pdata,
+	unsigned char *scratchbuf, const uint32_t *ptarget,
 	uint32_t max_nonce, unsigned long *hashes_done);
 
-extern bool scanhash_c(int, const unsigned char *midstate, unsigned char *data,
-	      unsigned char *hash, const unsigned char *target,
-	      uint32_t max_nonce, unsigned long *hashes_done);
-extern bool scanhash_cryptopp(int, const unsigned char *midstate,unsigned char *data,
-	      unsigned char *hash, const unsigned char *target,
-	      uint32_t max_nonce, unsigned long *hashes_done);
-extern bool scanhash_asm32(int, const unsigned char *midstate,unsigned char *data,
-	      unsigned char *hash,
-	      const unsigned char *target,
-	      uint32_t max_nonce, unsigned long *hashes_done);
-extern int scanhash_sse2_64(int, const unsigned char *pmidstate, unsigned char *pdata,
-	unsigned char *phash1, unsigned char *phash,
-	const unsigned char *ptarget,
-	uint32_t max_nonce, unsigned long *nHashesDone);
-
-extern int
-timeval_subtract (struct timeval *result, struct timeval *x, struct timeval *y);
-
-extern bool fulltest(const unsigned char *hash, const unsigned char *target);
-
-extern int opt_scantime;
-extern bool want_longpoll;
-extern bool have_longpoll;
-struct thread_q;
+struct thr_info {
+	int		id;
+	pthread_t	pth;
+	struct thread_q	*q;
+};
 
 struct work_restart {
 	volatile unsigned long	restart;
 	char			padding[128 - sizeof(unsigned long)];
 };
 
-extern pthread_mutex_t time_lock;
+extern bool opt_debug;
+extern bool opt_protocol;
+extern int opt_timeout;
+extern bool want_longpoll;
+extern bool have_longpoll;
+extern bool want_stratum;
+extern bool have_stratum;
+extern char *opt_cert;
+extern char *opt_proxy;
+extern long opt_proxy_type;
 extern bool use_syslog;
+extern pthread_mutex_t applog_lock;
 extern struct thr_info *thr_info;
 extern int longpoll_thr_id;
+extern int stratum_thr_id;
 extern struct work_restart *work_restart;
 
 extern void applog(int prio, const char *fmt, ...);
+extern json_t *json_rpc_call(CURL *curl, const char *url, const char *userpass,
+	const char *rpc_req, bool, bool, int *);
+extern char *bin2hex(const unsigned char *p, size_t len);
+extern bool hex2bin(unsigned char *p, const char *hexstr, size_t len);
+extern int timeval_subtract(struct timeval *result, struct timeval *x,
+	struct timeval *y);
+extern bool fulltest(const uint32_t *hash, const uint32_t *target);
+extern void diff_to_target(uint32_t *target, double diff);
+
+struct stratum_job {
+	char *job_id;
+	unsigned char prevhash[32];
+	size_t coinbase_size;
+	unsigned char *coinbase;
+	unsigned char *xnonce2;
+	int merkle_count;
+	unsigned char **merkle;
+	unsigned char version[4];
+	unsigned char nbits[4];
+	unsigned char ntime[4];
+	bool clean;
+	double diff;
+};
+
+struct stratum_ctx {
+	char *url;
+
+	CURL *curl;
+	char *curl_url;
+	char curl_err_str[CURL_ERROR_SIZE];
+	curl_socket_t sock;
+	size_t sockbuf_size;
+	char *sockbuf;
+	pthread_mutex_t sock_lock;
+
+	double next_diff;
+
+	char *session_id;
+	size_t xnonce1_size;
+	unsigned char *xnonce1;
+	size_t xnonce2_size;
+	struct stratum_job job;
+	pthread_mutex_t work_lock;
+};
+
+bool stratum_socket_full(struct stratum_ctx *sctx, int timeout);
+bool stratum_send_line(struct stratum_ctx *sctx, char *s);
+char *stratum_recv_line(struct stratum_ctx *sctx);
+bool stratum_connect(struct stratum_ctx *sctx, const char *url);
+void stratum_disconnect(struct stratum_ctx *sctx);
+bool stratum_subscribe(struct stratum_ctx *sctx);
+bool stratum_authorize(struct stratum_ctx *sctx, const char *user, const char *pass);
+bool stratum_handle_method(struct stratum_ctx *sctx, const char *s);
+
+struct thread_q;
+
 extern struct thread_q *tq_new(void);
 extern void tq_free(struct thread_q *tq);
 extern bool tq_push(struct thread_q *tq, void *data);
