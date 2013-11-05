@@ -9,5 +9,4 @@ aclocal
 autoheader
 automake --gnu --add-missing --copy
 autoconf
-autoreconf -i
 
