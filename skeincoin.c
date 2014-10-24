@@ -23,10 +23,9 @@ static void skeinhash(void *state, const void *input)
     sph_skein512 (&ctx_skein, input, 80); //6
     sph_skein512_close(&ctx_skein, hashA); //7
 
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, hashA, 64);
-    SHA256_Final(hashB, &sha256);
+    sph_skein512_init(&ctx_skein);
+    sph_skein512 (&ctx_skein, hashA, 64); //6
+    sph_skein512_close(&ctx_skein, hashB); //7
 
     memcpy(state, hashB, 32);
 	
